@@ -196,12 +196,9 @@ async def cmd_fx(m: types.Message):
         rub_usd = data["RUB"]["USD"]; rub_cny = data["RUB"]["CNY"]
         usd_rub = data["USD"]["RUB"]; cny_rub = data["CNY"]["RUB"]
         return await m.answer(
-            "Курсы (exchangerate.host):
-"
-            f"1 USD ≈ <b>{_fmt_amount(usd_rub)} RUB</b>
-"
-            f"1 CNY ≈ <b>{_fmt_amount(cny_rub)} RUB</b>
-"
+            "Курсы (exchangerate.host):\n"
+            f"1 USD ≈ <b>{_fmt_amount(usd_rub)} RUB</b>\n"
+            f"1 CNY ≈ <b>{_fmt_amount(cny_rub)} RUB</b>\n"
             f"1 RUB ≈ {_fmt_amount(rub_usd)} USD • {_fmt_amount(rub_cny)} CNY"
         )
     # try parse conversion
@@ -555,21 +552,20 @@ async def start_background():
             pass
         await dp.start_polling(bot)
 
+
 async def on_startup(app: web.Application):
     app["task"] = asyncio.create_task(start_background())
-    
-app["scheduler"] = asyncio.create_task(_ritual_loop())
-
+    app["scheduler"] = asyncio.create_task(_ritual_loop())
 
 async def on_cleanup(app: web.Application):
+    sched = app.get("scheduler")
+    if sched:
+        sched.cancel()
+        try:
+            await sched
+        except Exception:
+            pass
     task = app.get("task")
-    
-sched = app.get("scheduler")
-if sched:
-    sched.cancel()
-    try: await sched
-    except Exception: pass
-
     if task:
         task.cancel()
         try:
@@ -577,6 +573,7 @@ if sched:
         except Exception:
             pass
     await bot.session.close()
+
 
 def create_app() -> web.Application:
     app = web.Application()
