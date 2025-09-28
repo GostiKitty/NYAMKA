@@ -13,6 +13,8 @@ from aiogram.filters import Command
 from aiogram.types import BotCommand
 from aiogram.client.default import DefaultBotProperties
 from dotenv import load_dotenv
+from aiogram.webhook.aiohttp_server import SimpleRequestHandler, setup_application
+
 
 # ── ENV ────────────────────────────────────────────────────────────────────
 load_dotenv()
@@ -22,6 +24,11 @@ OPENAI_MODEL   = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
 OWM_API_KEY    = os.getenv("OWM_API_KEY", "")  # optional
 HOST = os.getenv("HOST", "0.0.0.0")
 PORT = int(os.getenv("PORT", "8080"))
+
+USE_WEBHOOK = os.getenv("USE_WEBHOOK", "0") == "1"
+PUBLIC_URL  = os.getenv("PUBLIC_URL")  # e.g. https://your-app.koyeb.app
+WEBHOOK_SECRET = os.getenv("TG_SECRET", "hooksecret")
+WEBHOOK_PATH = f"/tg/{WEBHOOK_SECRET}"
 
 if not BOT_TOKEN:
     raise RuntimeError("BOT_TOKEN is not set")
@@ -303,12 +310,18 @@ async def _set_commands():
         pass
 
 async def start_polling_background():
-    try:
-        await bot.delete_webhook(drop_pending_updates=True)
-    except Exception:
-        pass
     await _set_commands()
-    await dp.start_polling(bot)
+    if USE_WEBHOOK:
+        # set webhook
+        if not PUBLIC_URL:
+            raise RuntimeError("PUBLIC_URL is required when USE_WEBHOOK=1")
+        await bot.set_webhook(url=PUBLIC_URL + WEBHOOK_PATH, drop_pending_updates=True, secret_token=WEBHOOK_SECRET)
+    else:
+        try:
+            await bot.delete_webhook(drop_pending_updates=True)
+        except Exception:
+            pass
+        await dp.start_polling(bot)
 
 async def on_startup(app: web.Application):
     app["polling_task"] = asyncio.create_task(start_polling_background())
@@ -327,6 +340,9 @@ def create_app() -> web.Application:
     app.on_cleanup.append(on_cleanup)
     async def ping(_): return web.json_response({"ok": True})
     app.router.add_get("/", ping)
+    if USE_WEBHOOK:
+        SimpleRequestHandler(dispatcher=dp, bot=bot, secret_token=WEBHOOK_SECRET).register(app, path=WEBHOOK_PATH)
+        setup_application(app, dp, bot=bot)
     return app
 
 if __name__ == "__main__":

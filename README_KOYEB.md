@@ -21,3 +21,12 @@ python app.py
 - Port: 8080 (auto-detected)
 - Mount: none
 - Add env vars: BOT_TOKEN (required), OWM_API_KEY (optional), OPENAI_* (optional)
+
+
+## Webhook mode (recommended on Koyeb free)
+Set env vars:
+- USE_WEBHOOK=1
+- PUBLIC_URL=https://<your-app>.koyeb.app
+- TG_SECRET=<any random string>
+
+Telegram will call `https://<PUBLIC_URL>/tg/<TG_SECRET>`.
