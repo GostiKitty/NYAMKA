@@ -37,10 +37,29 @@ bot = Bot(BOT_TOKEN, default=DefaultBotProperties(parse_mode="HTML"))
 dp = Dispatcher()
 
 # ── DB ─────────────────────────────────────────────────────────────────────
+DB_ENV_PATH = os.getenv("DB_PATH")
 DB_DIR = os.getenv("DB_DIR", "/tmp")
-os.makedirs(DB_DIR, exist_ok=True)
-DB_PATH = os.getenv("DB_PATH", os.path.join(DB_DIR, "db.sqlite3"))
-db = sqlite3.connect(DB_PATH)
+def _open_db():
+    # 1) explicit DB_PATH
+    if DB_ENV_PATH:
+        try:
+            os.makedirs(os.path.dirname(DB_ENV_PATH) or ".", exist_ok=True)
+            return sqlite3.connect(DB_ENV_PATH)
+        except Exception as e:
+            print("[DB] Failed to open DB_PATH:", DB_ENV_PATH, e)
+    # 2) /tmp/db.sqlite3
+    try:
+        os.makedirs(DB_DIR, exist_ok=True)
+        p = os.path.join(DB_DIR, "db.sqlite3")
+        return sqlite3.connect(p)
+    except Exception as e:
+        print("[DB] Failed to open /tmp:", e)
+    # 3) in-memory fallback (non-persistent)
+    print("[DB] Falling back to in-memory DB")
+    return sqlite3.connect(":memory:")
+
+db = _open_db()
+DB_PATH = ":memory:" if db.execute("pragma database_list").fetchone()[2] == "" else db.execute("pragma database_list").fetchone()[2]
 cur = db.cursor()
 
 cur.execute("""CREATE TABLE IF NOT EXISTS users (
