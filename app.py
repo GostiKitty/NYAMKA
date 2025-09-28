@@ -22,7 +22,9 @@ SECRET_PATH = os.environ.get("WEBHOOK_SECRET_PATH", "telegram")
 PORT = int(os.environ.get("PORT", "8080"))
 HOST = os.environ.get("HOST", "0.0.0.0")
 
-bot = Bot(BOT_TOKEN, parse_mode="HTML")
+from aiogram.client.default import DefaultBotProperties
+bot = Bot(BOT_TOKEN, default=DefaultBotProperties(parse_mode="HTML"))
+
 dp = Dispatcher()
 
 # ---------------------- Keyboards ----------------------
