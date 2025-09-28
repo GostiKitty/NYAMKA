@@ -30,7 +30,9 @@ bot = Bot(BOT_TOKEN, default=DefaultBotProperties(parse_mode="HTML"))
 dp = Dispatcher()
 
 # ── DB ─────────────────────────────────────────────────────────────────────
-DB_PATH = os.getenv("DB_PATH", "db.sqlite3")
+DB_DIR = os.getenv("DB_DIR", "/tmp")
+os.makedirs(DB_DIR, exist_ok=True)
+DB_PATH = os.getenv("DB_PATH", os.path.join(DB_DIR, "db.sqlite3"))
 db = sqlite3.connect(DB_PATH)
 cur = db.cursor()
 
