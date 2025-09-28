@@ -21,10 +21,13 @@ DETA_PROJECT_KEY = os.environ.get("DETA_PROJECT_KEY", "")
 if not BOT_TOKEN:
     raise RuntimeError("BOT_TOKEN is required")
 
-WEBHOOK_BASE = os.environ.get("WEBHOOK_BASE", "").rstrip("/")          # https://<app>.koyeb.app
-SECRET_PATH  = os.environ.get("WEBHOOK_SECRET_PATH", "telegram").strip("/")  # <— ВАЖНО: убираем / с краёв
+WEBHOOK_BASE = os.environ.get("WEBHOOK_BASE", "").rstrip("/")              # https://<app>.koyeb.app
+SECRET_PATH  = os.environ.get("WEBHOOK_SECRET_PATH", "telegram").strip("/")  # <— убираем слэши
 PORT = int(os.environ.get("PORT", "8080"))
 HOST = os.environ.get("HOST", "0.0.0.0")
+
+# Глобальный режим приёма апдейтов: "webhook" или "polling"
+RUN_MODE = "unknown"
 
 # ── AIROGRAM BOOTSTRAP (v3.11) ────────────────────────────────────────────────
 bot = Bot(BOT_TOKEN, default=DefaultBotProperties(parse_mode="HTML"))
@@ -61,12 +64,14 @@ async def currency_rates(m: Message):
 
 @router.message(F.text == "/setwebhook")
 async def set_webhook_cmd(m: Message):
+    global RUN_MODE
     if not WEBHOOK_BASE:
         await m.answer("WEBHOOK_BASE не задан в переменных окружения Koyeb.")
         return
     url = f"{WEBHOOK_BASE}/{SECRET_PATH}"
     try:
         await bot.set_webhook(url, drop_pending_updates=True, request_timeout=20)
+        RUN_MODE = "webhook"
         await m.answer(f"✅ Webhook обновлён:\n{url}")
     except Exception as e:
         await m.answer(f"❌ Ошибка при установке вебхука:\n<code>{e}</code>")
@@ -74,9 +79,11 @@ async def set_webhook_cmd(m: Message):
 @router.message(F.text == "/webhookinfo")
 async def webhook_info_cmd(m: Message):
     info = await bot.get_webhook_info()
-    await m.answer(
-        "<b>WebhookInfo</b>\n<code>" + json.dumps(info.model_dump(), ensure_ascii=False, indent=2) + "</code>"
-    )
+    await m.answer("<b>WebhookInfo</b>\n<code>" + json.dumps(info.model_dump(), ensure_ascii=False, indent=2) + "</code>")
+
+@router.message(F.text == "/mode")
+async def mode_cmd(m: Message):
+    await m.answer(f"Текущий режим приёма апдейтов: <b>{RUN_MODE}</b>")
 
 @router.message()
 async def echo(m: Message):
@@ -84,38 +91,51 @@ async def echo(m: Message):
     logger.info(f"✅ update: text from {from_user}: {m.text!r}")
     await m.answer("Я тебя понял: " + (m.text or ""))
 
-# ── WEBHOOK STARTUP (safe with retries + диагностика) ─────────────────────────
-async def _set_webhook_safe():
-    logger.info(f"BOOT: WEBHOOK_BASE={WEBHOOK_BASE!r}, SECRET_PATH={SECRET_PATH!r}")
+# ── WEBHOOK / POLLING STARTUP ─────────────────────────────────────────────────
+async def try_set_webhook() -> bool:
+    """Пытаемся поставить вебхук. True — успех, False — нет."""
     if not WEBHOOK_BASE:
         logger.warning("WEBHOOK_BASE not set — skipping webhook setup")
-        return
-
+        return False
     url = f"{WEBHOOK_BASE}/{SECRET_PATH}"
     for attempt in range(1, 4):
         try:
             await bot.set_webhook(url, drop_pending_updates=True, request_timeout=20)
             logger.info(f"✅ Webhook set: {url}")
-            return
+            return True
         except Exception as e:
             logger.warning(f"Webhook attempt {attempt}/3 failed: {e}")
             await asyncio.sleep(2)
-    logger.error("❌ Webhook not set after retries. Running without webhook.")
+    return False
 
-    # Логируем текущее состояние у Телеги
-    try:
-        info = await bot.get_webhook_info()
-        logger.warning("Telegram getWebhookInfo: " + json.dumps(info.model_dump(), ensure_ascii=False))
-    except Exception as e:
-        logger.warning(f"getWebhookInfo failed: {e}")
+async def start_polling_background():
+    """Запускаем long polling параллельно с веб-сервером (фолбэк)."""
+    # Разрешаем только реально используемые типы апдейтов
+    allowed = dp.resolve_used_update_types()
+    logger.info(f"Starting long polling with allowed_updates={allowed}")
+    await dp.start_polling(bot, allowed_updates=allowed)
 
-# ── AIOHTTP APP ───────────────────────────────────────────────────────────────
 async def on_startup(app: web.Application):
-    await _set_webhook_safe()
+    global RUN_MODE
+    logger.info(f"BOOT: WEBHOOK_BASE={WEBHOOK_BASE!r}, SECRET_PATH={SECRET_PATH!r}")
+    ok = await try_set_webhook()
+    if ok:
+        RUN_MODE = "webhook"
+    else:
+        # Фолбэк: Telegram не может достучаться → слушаем апдейты сами
+        RUN_MODE = "polling"
+        app["polling_task"] = asyncio.create_task(start_polling_background())
 
 async def on_cleanup(app: web.Application):
+    # Останавливаем polling если он запущен
+    task = app.get("polling_task")
+    if task:
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
     await bot.session.close()
 
+# ── AIOHTTP APP ───────────────────────────────────────────────────────────────
 def create_app() -> web.Application:
     app = web.Application()
     app.on_startup.append(on_startup)
@@ -123,10 +143,22 @@ def create_app() -> web.Application:
 
     # Healthcheck
     async def ping(request):
-        return web.json_response({"ok": True, "status": "alive"})
+        return web.json_response({"ok": True, "status": "alive", "mode": RUN_MODE})
     app.router.add_get("/", ping)
 
-    # GET-диагностика webhook-пути (POST приходит от Telegram)
+    # Диагностика (помогает понять, куда смотрит вебхук)
+    async def diag(request):
+        info = await bot.get_webhook_info()
+        return web.json_response({
+            "mode": RUN_MODE,
+            "webhook_base": WEBHOOK_BASE,
+            "secret_path": f"/{SECRET_PATH}",
+            "webhook_url_expected": f"{WEBHOOK_BASE}/{SECRET_PATH}" if WEBHOOK_BASE else None,
+            "telegram_webhook_info": info.model_dump(),
+        })
+    app.router.add_get("/diag", diag)
+
+    # GET-диагностика на webhook-пути (POST для Telegram)
     async def secret_get(request):
         return web.json_response({"ok": True, "webhook_path": f"/{SECRET_PATH}"})
     app.router.add_get(f"/{SECRET_PATH}", secret_get)
@@ -139,5 +171,6 @@ def create_app() -> web.Application:
     return app
 
 # ── ENTRYPOINT ────────────────────────────────────────────────────────────────
+import contextlib
 if __name__ == "__main__":
     web.run_app(create_app(), host=HOST, port=PORT)
