@@ -185,8 +185,7 @@ def create_app() -> web.Application:
         async def hook_get(_):
             return web.Response(text="hook alive")
         app.router.add_get(WEBHOOK_PATH, hook_get)
-        app.router.add_head(WEBHOOK_PATH, hook_get)
-        app.router.add_options(WEBHOOK_PATH, hook_get)
+                app.router.add_options(WEBHOOK_PATH, hook_get)
 
         # webhook POST handler
         SimpleRequestHandler(dispatcher=dp, bot=bot, secret_token=WEBHOOK_SECRET).register(app, path=WEBHOOK_PATH)
