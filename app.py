@@ -86,3 +86,13 @@ def create_app() -> web.Application:
 
 if __name__ == "__main__":
     web.run_app(create_app(), host=HOST, port=PORT)
+from aiogram import types
+
+@dp.message(F.text == "/setwebhook")
+async def set_webhook_cmd(m: Message):
+    url = f"{WEBHOOK_BASE}/{SECRET_PATH}"
+    try:
+        await bot.set_webhook(url, drop_pending_updates=True)
+        await m.answer(f"✅ Webhook обновлён:\n{url}")
+    except Exception as e:
+        await m.answer(f"❌ Ошибка при установке вебхука:\n{e}")
