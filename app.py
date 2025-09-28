@@ -1,6 +1,6 @@
 import os
+import sys
 import asyncio
-import json
 import contextlib
 import requests
 from aiohttp import web
@@ -10,6 +10,7 @@ from aiogram.client.default import DefaultBotProperties
 from dotenv import load_dotenv
 from loguru import logger
 
+# ── ENV ────────────────────────────────────────────────────────────────────
 load_dotenv()
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
 if not BOT_TOKEN:
@@ -17,12 +18,21 @@ if not BOT_TOKEN:
 PORT = int(os.environ.get("PORT", "8080"))
 HOST = os.environ.get("HOST", "0.0.0.0")
 
+# ── Logging: minimal buffers, console only ─────────────────────────────────
+logger.remove()  # remove default handler
+logger.add(sys.stdout, level=os.getenv("LOG_LEVEL", "WARNING"))
+
+# ── AIROGRAM BOOTSTRAP (v3.11) ────────────────────────────────────────────
 bot = Bot(BOT_TOKEN, default=DefaultBotProperties(parse_mode="HTML"))
 dp = Dispatcher()
 router = Router()
 dp.include_router(router)
 
-main_kb = ReplyKeyboardMarkup(keyboard=[[KeyboardButton(text="📈 Курс валют")]], resize_keyboard=True)
+# ── OPTIONAL UI: currency rates button ────────────────────────────────────
+main_kb = ReplyKeyboardMarkup(
+    keyboard=[[KeyboardButton(text="📈 Курс валют")]],
+    resize_keyboard=True
+)
 
 @router.message(F.text == "/start")
 async def cmd_start__nyamka(m: Message):
@@ -35,13 +45,13 @@ async def currency_rates__nyamka(m: Message):
         data = r.json()
         usd = float(data["Valute"]["USD"]["Value"])
         cny = float(data["Valute"]["CNY"]["Value"])
-        text = f"💵 1 USD = {usd:.2f} ₽\n🇨🇳 1 CNY = {cny:.2f} ₽"
+        text = f"💵 1 USD = {usd:.2f} ₽\\n🇨🇳 1 CNY = {cny:.2f} ₽"
     except Exception as e:
         logger.error(f"Currency fetch error: {e}")
         text = "Не удалось получить курс валют 😔"
     await m.answer(text)
 
-# ---- Imported handlers from notebook below ----
+# ── BEGIN: imported handlers from notebook ────────────────────────────────
 
 # # 1) Установка зависимостей
 # !pip install -q --upgrade aiogram==3.4.1 openai>=1.40.0 python-dotenv>=1.0.1 requests>=2.31.0 PyYAML>=6.0.1 nest_asyncio>=1.6.0 tzdata>=2024.1
@@ -1743,16 +1753,18 @@ def create_app() -> web.Application:
 
 
 
+# ── POLLING LAUNCH (memory-friendly) ──────────────────────────────────────
 async def start_polling_background():
+    # Disable possible old webhook to avoid mixed modes
     try:
         await bot.delete_webhook(drop_pending_updates=True)
-        logger.info("🧹 Webhook deleted (drop_pending_updates=True)")
-    except Exception as e:
-        logger.warning(f"delete_webhook failed: {e}")
+    except Exception:
+        pass
     allowed = dp.resolve_used_update_types()
     logger.info(f"Starting long polling with allowed_updates={allowed}")
     await dp.start_polling(bot, allowed_updates=allowed)
 
+# ── AIOHTTP APP (healthcheck only) ────────────────────────────────────────
 async def on_startup(app: web.Application):
     app["polling_task"] = asyncio.create_task(start_polling_background())
 
@@ -1768,13 +1780,10 @@ def create_app() -> web.Application:
     app = web.Application()
     app.on_startup.append(on_startup)
     app.on_cleanup.append(on_cleanup)
+
     async def ping(request):
         return web.json_response({"ok": True, "status": "alive", "mode": "polling"})
     app.router.add_get("/", ping)
-    async def diag(request):
-        me = await bot.get_me()
-        return web.json_response({"bot": me.model_dump(), "mode": "polling"})
-    app.router.add_get("/diag", diag)
     return app
 
 if __name__ == "__main__":

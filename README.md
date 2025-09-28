@@ -1,32 +1,18 @@
-# NYAMKA Bot for Koyeb
+# NYAMKA — Memory-optimized Koyeb package
 
-## Features
-- Telegram bot on aiogram v3 + aiohttp
-- Webhook ready for Koyeb
+- Single-file `app.py` with your notebook handlers (long polling)
+- Minimal logging to reduce memory (set `LOG_LEVEL` env if needed)
+- Slim Docker image, pip cache disabled
 - Healthcheck at `/`
-- Menu with "📈 Курс валют" → shows RUB→USD, RUB→CNY rates from Central Bank of Russia
 
-## Files
-- app.py — main application
-- requirements.txt — dependencies
-- Dockerfile — build instructions
-- .env.example — env vars template
+## Deploy
+1) Put files in repo root.
+2) Koyeb: Builder = Dockerfile, path = `Dockerfile`.
+3) Set env: BOT_TOKEN (required), LOG_LEVEL (optional). Others only if handlers use them.
+4) Redeploy. If only `app.py` changed → Skip build; if `requirements.txt` changed → Trigger build.
 
-## How to Deploy
-1. Push these files to your GitHub repo.
-2. Create service on Koyeb with Builder type = Dockerfile, path = `Dockerfile`.
-3. Set Environment variables:
-   - BOT_TOKEN
-   - OPENAI_API_KEY (optional)
-   - OWM_API_KEY (optional)
-   - DETA_PROJECT_KEY (optional)
-   - WEBHOOK_BASE = your public URL from Koyeb
-   - WEBHOOK_SECRET_PATH = any secret string
-4. Deploy 🚀
-
-## Local run
-```bash
-pip install -r requirements.txt
-export $(cat .env | xargs)
-python app.py
-```
+## Memory tips
+- Keep `requirements.txt` short.
+- Heavy libs (openai, deta) are optional — remove if not used.
+- Avoid storing large data in globals; load on demand.
+- Logging kept at WARNING by default; increase only for debugging.
