@@ -72,9 +72,12 @@ import os
 # В Deta Space ключ не нужен, но для локального теста можно указать:
 # DETA_PROJECT_KEY from env
 
-os.environ["BOT_TOKEN"] = BOT_TOKEN
-os.environ["OPENAI_API_KEY"] = OPENAI_API_KEY
-os.environ["OWM_API_KEY"] = OWM_API_KEY
+BOT_TOKEN = os.getenv("BOT_TOKEN", "")
+
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
+
+OWM_API_KEY = os.getenv("OWM_API_KEY", "")
+
 # Локальный путь к БД нам не нужен (Deta Base), оставим для совместимости:
 os.environ["DB_PATH"] = "db.sqlite3"
 
