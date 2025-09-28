@@ -2,7 +2,7 @@ import os
 import asyncio
 import requests
 from aiohttp import web
-from aiogram import Bot, Dispatcher, F
+from aiogram import Bot, Dispatcher, F, Router
 from aiogram.types import Message, KeyboardButton, ReplyKeyboardMarkup
 from aiogram.webhook.aiohttp_server import SimpleRequestHandler, setup_application
 from aiogram.client.default import DefaultBotProperties
@@ -21,35 +21,32 @@ if not BOT_TOKEN:
     raise RuntimeError("BOT_TOKEN is required")
 
 WEBHOOK_BASE = os.environ.get("WEBHOOK_BASE", "").rstrip("/")   # e.g. https://<app>.koyeb.app
-SECRET_PATH  = os.environ.get("WEBHOOK_SECRET_PATH", "telegram") # random secret path
+SECRET_PATH  = os.environ.get("WEBHOOK_SECRET_PATH", "telegram")
 PORT = int(os.environ.get("PORT", "8080"))
 HOST = os.environ.get("HOST", "0.0.0.0")
 
 # ── AIROGRAM BOOTSTRAP (v3.11) ────────────────────────────────────────────────
-# parse_mode настраиваем через DefaultBotProperties (в 3.11 нельзя передавать прямо в Bot)
 bot = Bot(BOT_TOKEN, default=DefaultBotProperties(parse_mode="HTML"))
 dp = Dispatcher()
+router = Router()
+dp.include_router(router)
 
-# ── KEYBOARDS ─────────────────────────────────────────────────────────────────
+# ── KEYBOARD ──────────────────────────────────────────────────────────────────
 main_kb = ReplyKeyboardMarkup(
-    keyboard=[
-        [KeyboardButton(text="📈 Курс валют")],
-    ],
+    keyboard=[[KeyboardButton(text="📈 Курс валют")]],
     resize_keyboard=True
 )
 
-# ── HANDLERS ──────────────────────────────────────────────────────────────────
-@dp.message(F.text == "/start")
+# ── HANDLERS (через Router) ───────────────────────────────────────────────────
+@router.message(F.text == "/start")
 async def cmd_start(m: Message):
     await m.answer(
-        "Привет! Я бот NYAMKA 🐾\n"
-        "Пробуй кнопки ниже или пиши сообщение — я отвечу.",
+        "Привет! Я бот NYAMKA 🐾\nЖми кнопки или пиши сообщение.",
         reply_markup=main_kb
     )
 
-@dp.message(F.text == "📈 Курс валют")
+@router.message(F.text == "📈 Курс валют")
 async def currency_rates(m: Message):
-    """Показываем RUB→USD и RUB→CNY по данным ЦБ РФ."""
     try:
         r = requests.get("https://www.cbr-xml-daily.ru/daily_json.js", timeout=10)
         data = r.json()
@@ -61,11 +58,10 @@ async def currency_rates(m: Message):
         text = "Не удалось получить курс валют 😔"
     await m.answer(text)
 
-@dp.message(F.text == "/setwebhook")
+@router.message(F.text == "/setwebhook")
 async def set_webhook_cmd(m: Message):
-    """Ручная установка вебхука из чата."""
     if not WEBHOOK_BASE:
-        await m.answer("WEBHOOK_BASE не задан. Добавь переменную окружения на Koyeb.")
+        await m.answer("WEBHOOK_BASE не задан в переменных окружения Koyeb.")
         return
     url = f"{WEBHOOK_BASE}/{SECRET_PATH}"
     try:
@@ -74,16 +70,14 @@ async def set_webhook_cmd(m: Message):
     except Exception as e:
         await m.answer(f"❌ Ошибка при установке вебхука:\n<code>{e}</code>")
 
-@dp.message()
+@router.message()
 async def echo(m: Message):
-    """Простое эхо + лог входящих апдейтов, чтобы видеть их в консоли Koyeb."""
     from_user = f"{m.from_user.id} @{m.from_user.username}" if m.from_user else "unknown"
     logger.info(f"✅ update: text from {from_user}: {m.text!r}")
     await m.answer("Я тебя понял: " + (m.text or ""))
 
 # ── WEBHOOK STARTUP (safe with retries) ───────────────────────────────────────
 async def _set_webhook_safe():
-    """Пытаемся поставить вебхук, но не падаем, если Телеграм временно недоступен."""
     if not WEBHOOK_BASE:
         logger.warning("WEBHOOK_BASE not set — skipping webhook setup")
         return
@@ -115,7 +109,7 @@ def create_app() -> web.Application:
         return web.json_response({"ok": True, "status": "alive"})
     app.router.add_get("/", ping)
 
-    # Debug GET на webhook-пути (POST приходит от Telegram, GET — для быстрой проверки в браузере)
+    # GET-диагностика на webhook-пути (POST для Telegram)
     async def secret_get(request):
         return web.json_response({"ok": True, "webhook_path": f"/{SECRET_PATH}"})
     app.router.add_get(f"/{SECRET_PATH}", secret_get)
