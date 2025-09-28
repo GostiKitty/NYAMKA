@@ -1,5 +1,6 @@
 import os
 import asyncio
+import json
 import requests
 from aiohttp import web
 from aiogram import Bot, Dispatcher, F, Router
@@ -20,8 +21,8 @@ DETA_PROJECT_KEY = os.environ.get("DETA_PROJECT_KEY", "")
 if not BOT_TOKEN:
     raise RuntimeError("BOT_TOKEN is required")
 
-WEBHOOK_BASE = os.environ.get("WEBHOOK_BASE", "").rstrip("/")   # e.g. https://<app>.koyeb.app
-SECRET_PATH  = os.environ.get("WEBHOOK_SECRET_PATH", "telegram")
+WEBHOOK_BASE = os.environ.get("WEBHOOK_BASE", "").rstrip("/")          # https://<app>.koyeb.app
+SECRET_PATH  = os.environ.get("WEBHOOK_SECRET_PATH", "telegram").strip("/")  # <— ВАЖНО: убираем / с краёв
 PORT = int(os.environ.get("PORT", "8080"))
 HOST = os.environ.get("HOST", "0.0.0.0")
 
@@ -37,7 +38,7 @@ main_kb = ReplyKeyboardMarkup(
     resize_keyboard=True
 )
 
-# ── HANDLERS (через Router) ───────────────────────────────────────────────────
+# ── HANDLERS ──────────────────────────────────────────────────────────────────
 @router.message(F.text == "/start")
 async def cmd_start(m: Message):
     await m.answer(
@@ -65,10 +66,17 @@ async def set_webhook_cmd(m: Message):
         return
     url = f"{WEBHOOK_BASE}/{SECRET_PATH}"
     try:
-        await bot.set_webhook(url, drop_pending_updates=True)
+        await bot.set_webhook(url, drop_pending_updates=True, request_timeout=20)
         await m.answer(f"✅ Webhook обновлён:\n{url}")
     except Exception as e:
         await m.answer(f"❌ Ошибка при установке вебхука:\n<code>{e}</code>")
+
+@router.message(F.text == "/webhookinfo")
+async def webhook_info_cmd(m: Message):
+    info = await bot.get_webhook_info()
+    await m.answer(
+        "<b>WebhookInfo</b>\n<code>" + json.dumps(info.model_dump(), ensure_ascii=False, indent=2) + "</code>"
+    )
 
 @router.message()
 async def echo(m: Message):
@@ -76,21 +84,30 @@ async def echo(m: Message):
     logger.info(f"✅ update: text from {from_user}: {m.text!r}")
     await m.answer("Я тебя понял: " + (m.text or ""))
 
-# ── WEBHOOK STARTUP (safe with retries) ───────────────────────────────────────
+# ── WEBHOOK STARTUP (safe with retries + диагностика) ─────────────────────────
 async def _set_webhook_safe():
+    logger.info(f"BOOT: WEBHOOK_BASE={WEBHOOK_BASE!r}, SECRET_PATH={SECRET_PATH!r}")
     if not WEBHOOK_BASE:
         logger.warning("WEBHOOK_BASE not set — skipping webhook setup")
         return
+
     url = f"{WEBHOOK_BASE}/{SECRET_PATH}"
     for attempt in range(1, 4):
         try:
-            await bot.set_webhook(url, drop_pending_updates=True)
+            await bot.set_webhook(url, drop_pending_updates=True, request_timeout=20)
             logger.info(f"✅ Webhook set: {url}")
             return
         except Exception as e:
             logger.warning(f"Webhook attempt {attempt}/3 failed: {e}")
             await asyncio.sleep(2)
     logger.error("❌ Webhook not set after retries. Running without webhook.")
+
+    # Логируем текущее состояние у Телеги
+    try:
+        info = await bot.get_webhook_info()
+        logger.warning("Telegram getWebhookInfo: " + json.dumps(info.model_dump(), ensure_ascii=False))
+    except Exception as e:
+        logger.warning(f"getWebhookInfo failed: {e}")
 
 # ── AIOHTTP APP ───────────────────────────────────────────────────────────────
 async def on_startup(app: web.Application):
@@ -109,7 +126,7 @@ def create_app() -> web.Application:
         return web.json_response({"ok": True, "status": "alive"})
     app.router.add_get("/", ping)
 
-    # GET-диагностика на webhook-пути (POST для Telegram)
+    # GET-диагностика webhook-пути (POST приходит от Telegram)
     async def secret_get(request):
         return web.json_response({"ok": True, "webhook_path": f"/{SECRET_PATH}"})
     app.router.add_get(f"/{SECRET_PATH}", secret_get)
