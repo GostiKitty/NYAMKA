@@ -19,9 +19,8 @@ BOT_TOKEN = os.getenv("BOT_TOKEN")
 HOST = os.getenv("HOST", "0.0.0.0")
 PORT = int(os.getenv("PORT", "8080"))
 
-# Webhook config
 USE_WEBHOOK = os.getenv("USE_WEBHOOK", "1") == "1"
-PUBLIC_URL = os.getenv("PUBLIC_URL")  # e.g., https://your-app.koyeb.app
+PUBLIC_URL = os.getenv("PUBLIC_URL")
 WEBHOOK_SECRET = os.getenv("TG_SECRET", "hooksecret")
 WEBHOOK_PATH = f"/tg/{WEBHOOK_SECRET}"
 
@@ -36,21 +35,18 @@ DB_ENV_PATH = os.getenv("DB_PATH")
 DB_DIR = os.getenv("DB_DIR", "/tmp")
 
 def _open_db():
-    # 1) explicit DB_PATH
     if DB_ENV_PATH:
         try:
             os.makedirs(os.path.dirname(DB_ENV_PATH) or ".", exist_ok=True)
             return sqlite3.connect(DB_ENV_PATH)
         except Exception as e:
             print("[DB] Failed to open DB_PATH:", DB_ENV_PATH, e)
-    # 2) /tmp/db.sqlite3
     try:
         os.makedirs(DB_DIR, exist_ok=True)
         p = os.path.join(DB_DIR, "db.sqlite3")
         return sqlite3.connect(p)
     except Exception as e:
         print("[DB] Failed to open /tmp:", e)
-    # 3) in-memory fallback (non-persistent)
     print("[DB] Falling back to in-memory DB")
     return sqlite3.connect(":memory:")
 
@@ -181,13 +177,10 @@ def create_app() -> web.Application:
     app.router.add_get("/", ping_handler)
 
     if USE_WEBHOOK:
-        # test handlers to verify path exists via browser/health checks
         async def hook_get(_):
             return web.Response(text="hook alive")
         app.router.add_get(WEBHOOK_PATH, hook_get)
-                app.router.add_options(WEBHOOK_PATH, hook_get)
-
-        # webhook POST handler
+        # Register POST webhook handler
         SimpleRequestHandler(dispatcher=dp, bot=bot, secret_token=WEBHOOK_SECRET).register(app, path=WEBHOOK_PATH)
         setup_application(app, dp, bot=bot)
         print(f"[WEBHOOK] route registered at {WEBHOOK_PATH}")
