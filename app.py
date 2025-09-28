@@ -8,7 +8,7 @@ from zoneinfo import ZoneInfo
 from aiohttp import web
 from aiogram import Bot, Dispatcher, F, types
 from aiogram.filters import Command
-from aiogram.types import BotCommand
+from aiogram.types import BotCommand, ReplyKeyboardMarkup, KeyboardButton
 from aiogram.client.default import DefaultBotProperties
 from aiogram.webhook.aiohttp_server import SimpleRequestHandler, setup_application
 from dotenv import load_dotenv
@@ -229,6 +229,17 @@ async def cmd_fx(m: types.Message):
     val = amt * rate
     await m.answer(f"{_fmt_amount(amt)} {src} → <b>{_fmt_amount(val)} {dst}</b>")
 
+
+def main_keyboard():
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text="💙 Настроение"), KeyboardButton(text="💌 Вопросы")],
+            [KeyboardButton(text="🕒 Время"), KeyboardButton(text="🌊 Погода")],
+            [KeyboardButton(text="💱 Курсы"), KeyboardButton(text="📅 Недельный дайджест")]
+        ],
+        resize_keyboard=True
+    )
+
 # ── BASIC HANDLERS ─────────────────────────────────────────────────────────
 
 
@@ -365,6 +376,26 @@ async def _geocode_city(city: str):
         print("[geo] err", e)
         return None, None
 
+
+OWM_KEY = os.getenv("OWM_API_KEY")
+
+async def _weather_by_city(city: str):
+    if OWM_KEY:
+        url = f"https://api.openweathermap.org/data/2.5/weather?q={city}&appid={OWM_KEY}&units=metric&lang=ru"
+        try:
+            async with ClientSession() as s:
+                async with s.get(url, timeout=10) as r:
+                    j = await r.json()
+            t = j.get("main",{}).get("temp")
+            w = (j.get("wind",{}) or {}).get("speed")
+            return {"temperature_2m": t, "wind_speed_10m": w}
+        except Exception as e:
+            print("[owm] err", e)
+    # fallback open-meteo
+    lat, lon = await _geocode_city(city)
+    if not lat: return {}
+    return await _weather_by_coords(lat, lon)
+
 async def _weather_by_coords(lat, lon):
     url = f"https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}&current=temperature_2m,weather_code,wind_speed_10m"
     try:
@@ -499,6 +530,33 @@ async def echo(m: types.Message):
     await m.answer(m.text or "Пусто")
 
 
+
+# ── WEEKLY DIGEST ──────────────────────────────────────────────────────────
+@dp.message(Command("digest"))
+@dp.message(F.text == "📅 Недельный дайджест")
+async def cmd_digest(m: types.Message):
+    uid = m.from_user.id
+    # mood sparkline
+    cur.execute("SELECT day, AVG(score) FROM moods WHERE user_id=? GROUP BY day ORDER BY day DESC LIMIT 7", (uid,))
+    rows = cur.fetchall()
+    rows = list(reversed(rows))
+    if not rows:
+        return await m.answer("Пока нет настроений за неделю. Поставь пару записей через /mood.")
+    line = []
+    summary_input = []
+    for day, avg in rows:
+        blocks = "▁▂▃▄▅▆▇"[int(min(6, max(0, round((avg or 0)/10*6))))]
+        line.append(blocks)
+        summary_input.append(f"{day}: {avg:.1f}/10")
+    moodline = "".join(line)
+    text_block = "\n".join(summary_input)
+    # Ask AI for short human summary and 2-3 steps
+    try:
+        ai = await _ai_answer_with_ctx(uid, f"Сводка настроения по дням:\n{text_block}\nСделай короткий человеческий обзор (2–3 предложения) и предложи 2–3 мягких шага на следующую неделю.")
+    except Exception as e:
+        ai = f"(не удалось получить обзор ИИ: {e})"
+    await m.answer(f"Муд недели: {moodline}\n{text_block}\n\n{ai}")
+
 # ── WEEK & DEBUG ───────────────────────────────────────────────────────────
 @dp.message(Command("week"))
 async def cmd_week(m: types.Message):
@@ -598,3 +656,26 @@ def create_app() -> web.Application:
 
 if __name__ == "__main__":
     web.run_app(create_app(), host=HOST, port=PORT)
+
+async def _ai_answer_with_ctx(uid: int, text: str) -> str:
+    # Build short context from chatlog
+    if llm_short_reply is None:
+        return "Я сейчас без ключа ИИ, но уже не повторяю дословно: " + text[:200]
+    try:
+        cur.execute("SELECT role, content FROM chatlog WHERE user_id=? ORDER BY id DESC LIMIT 8", (uid,))
+        rows = cur.fetchall()
+        rows = list(reversed(rows))
+        ctx = []
+        for r,c in rows:
+            role = "assistant" if r=="assistant" else "user"
+            ctx.append({"role": role, "content": c[-400:]})
+        # Add system persona via llm.py automatically; we pass only user content here concatenated
+        # Compose a compact conversation string
+        convo = ""
+        for m in ctx[-6:]:
+            who = "Ты" if m["role"]=="assistant" else "Я"
+            convo += f"{who}: {m['content']}\n"
+        prompt = f"{convo}\nЯ: {text}\nОтветь как обычно, учитывая контекст выше."
+        return llm_short_reply(prompt)
+    except Exception as e:
+        return f"Не смогла позвать ИИ: {e}"
