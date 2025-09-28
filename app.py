@@ -58,7 +58,7 @@ async def currency_rates__nyamka(m: Message):
 # print("✅ Готово")
 
 # Ячейка 1 — ставим зависимости
-               openai==1.46.0 deta==1.2.0
+#               openai==1.46.0 deta==1.2.0
 
 
 import os
