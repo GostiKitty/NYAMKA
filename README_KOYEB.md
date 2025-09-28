@@ -30,3 +30,10 @@ Set env vars:
 - TG_SECRET=<any random string>
 
 Telegram will call `https://<PUBLIC_URL>/tg/<TG_SECRET>`.
+
+
+### Диагностика если бот молчит
+1) Открой `https://api.telegram.org/bot<ТОКЕН>/getWebhookInfo` — в `url` должен быть твой `PUBLIC_URL + /tg/<секрет>`, а `last_error_message` пустой.
+2) В логе Koyeb после деплоя увидишь строку `[WEBHOOK] Setting webhook to ...`.
+3) Отправь `/ping` — в логах появится `[UPDATE] webhook message from ...`; в ответ бот пришлёт `pong`.
+4) Если что-то не так — выполни `/setwebhook` или задеплой ещё раз.

@@ -196,6 +196,7 @@ async def cmd_q(m: types.Message):
 
 @dp.message(F.text)
 async def text_router(m: types.Message):
+    print('[UPDATE] webhook message from', m.from_user.id)
     # ответ на вопрос?
     qw = m.bot.get('q_wait', {}).get(m.from_user.id)
     if qw:
@@ -304,6 +305,20 @@ async def cmd_week(m: types.Message):
 
 # Админ: /debug
 @dp.message(Command("debug"))
+
+@dp.message(Command("ping"))
+async def cmd_ping(m: types.Message):
+    await m.answer("pong")
+
+@dp.message(Command("setwebhook"))
+async def cmd_setwebhook(m: types.Message):
+    if not USE_WEBHOOK:
+        return await m.answer("USE_WEBHOOK=0 — режим polling. Переключи переменные окружения.")
+    if not PUBLIC_URL:
+        return await m.answer("PUBLIC_URL не задан.")
+    await bot.set_webhook(url=PUBLIC_URL + WEBHOOK_PATH, drop_pending_updates=True, secret_token=WEBHOOK_SECRET)
+    await m.answer("webhook обновлён")
+
 async def cmd_debug(m: types.Message):
     _, tz, pet = get_user(m.from_user.id)
     _, city, partner, units = get_prefs(m.from_user.id)
@@ -334,7 +349,8 @@ async def start_polling_background():
         # set webhook
         if not PUBLIC_URL:
             raise RuntimeError("PUBLIC_URL is required when USE_WEBHOOK=1")
-        await bot.set_webhook(url=PUBLIC_URL + WEBHOOK_PATH, drop_pending_updates=True, secret_token=WEBHOOK_SECRET)
+        print(f"[WEBHOOK] Setting webhook to {PUBLIC_URL + WEBHOOK_PATH}")
+await bot.set_webhook(url=PUBLIC_URL + WEBHOOK_PATH, drop_pending_updates=True, secret_token=WEBHOOK_SECRET)
     else:
         try:
             await bot.delete_webhook(drop_pending_updates=True)
